@@ -1,0 +1,21 @@
+.DS_Store
+**/.DS_Store
+
+# Build artifacts
+**/build/
+**/*.elf
+**/*.bin
+**/*.hex
+**/*.map
+**/*.lst
+**/*.o
+**/*.a
+**/*.d
+
+# IDE/editor
+.vscode/
+.idea/
+
+# Python
+__pycache__/
+*.pyc
