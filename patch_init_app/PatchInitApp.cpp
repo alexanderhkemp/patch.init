@@ -13,6 +13,8 @@ DaisyPatchSM patch;
 
 static LadderFilter lpf_l;
 static LadderFilter lpf_r;
+static LadderFilter hpf_send_l;
+static LadderFilter hpf_send_r;
 
 static DelayLine<float, 1920000> delay_l __attribute__((section(".sdram_bss")));
 static DelayLine<float, 1920000> delay_r __attribute__((section(".sdram_bss")));
@@ -20,6 +22,7 @@ static OnePole coloration_l;
 static OnePole coloration_r;
 
 static Switch tap_button;
+static Switch toggle_mode;
 static float tap_tempo_bpm = 120.0f;
 static uint32_t sample_count = 0;
 static uint32_t led_pulse_sample = 0;
@@ -41,8 +44,8 @@ static void AudioCallback(AudioHandle::InputBuffer in,
     const float pot_cutoff  = (patch.GetAdcValue(CV_1) + 1.0f) * 0.5f;
     const float pot_res     = (patch.GetAdcValue(CV_2) + 1.0f) * 0.5f;
 
-    const float cv_freq = ((patch.GetAdcValue(CV_5) - 0.5f) * 2.0f) * 0.2f;
-    const float cv_res  = ((patch.GetAdcValue(CV_6) - 0.5f) * 2.0f) * 0.2f;
+    const float cv_freq = ((patch.GetAdcValue(CV_5) - 0.5f) * 2.0f) * 0.35f;
+    const float cv_res  = ((patch.GetAdcValue(CV_6) - 0.5f) * 2.0f) * 0.35f;
 
     const float cutoff_norm = fclamp(pot_cutoff + (cv_freq * 0.5f), 0.0f, 1.0f);
     const float res_norm    = fclamp(pot_res + (cv_res * 0.35f), 0.0f, 1.0f);
@@ -52,7 +55,7 @@ static void AudioCallback(AudioHandle::InputBuffer in,
     const float ratio  = max_hz / min_hz;
     freq_hz            = min_hz * powf(ratio, cutoff_norm);
 
-    res = res_norm * 1.55f;
+    res = res_norm * 1.25f;
 
     lpf_l.SetFreq(freq_hz);
     lpf_r.SetFreq(freq_hz);
@@ -72,29 +75,60 @@ static void AudioCallback(AudioHandle::InputBuffer in,
     const float delay_time_ms = quarter_note_ms * (1.0f + cv_time_mod * 0.1f);
     const float delay_samples = (delay_time_ms / 1000.0f) * patch.AudioSampleRate();
 
-    const float feedback = pot_feedback;
-    const float wet_amount = pot_send;
-    const float dry_amount = 1.0f - wet_amount;
+    float send_level = pot_send;
+    if(pot_send < 0.04f)
+        send_level = 0.0f;
+    
+    const float feedback = pot_feedback * 1.5f;
+    
+    float dry_fader = 1.0f;
+    if(pot_send >= 0.6f)
+    {
+        const float fader_range = (pot_send - 0.6f) / 0.4f;
+        dry_fader = 1.0f - (fader_range * 0.40f);
+    }
+
+    toggle_mode.Debounce();
+    const bool hpf_enabled = toggle_mode.Pressed();
 
     for(size_t i = 0; i < size; i++)
     {
         const float x_l = lpf_l.Process(IN_L[i]);
         const float x_r = lpf_r.Process(IN_R[i]);
 
-        const float delayed_l = delay_l.Read(delay_samples);
-        const float delayed_r = delay_r.Read(delay_samples);
-
-        const float saturated_l = tanhf(delayed_l * 0.8f);
-        const float saturated_r = tanhf(delayed_r * 0.8f);
+        const float saturated_l = tanhf(x_l * 1.0f);
+        const float saturated_r = tanhf(x_r * 1.0f);
 
         const float colored_l = coloration_l.Process(saturated_l);
         const float colored_r = coloration_r.Process(saturated_r);
 
-        delay_l.Write(x_l * wet_amount + colored_r * feedback);
-        delay_r.Write(x_r * wet_amount + colored_l * feedback);
+        float send_signal_l = colored_l;
+        float send_signal_r = colored_r;
+        if(hpf_enabled)
+        {
+            send_signal_l = hpf_send_l.Process(colored_l);
+            send_signal_r = hpf_send_r.Process(colored_r);
+        }
 
-        OUT_L[i] = x_l * dry_amount + colored_l * 0.6f * wet_amount;
-        OUT_R[i] = x_r * dry_amount + colored_r * 0.6f * wet_amount;
+        const float delayed_l = delay_l.Read(delay_samples);
+        const float delayed_r = delay_r.Read(delay_samples);
+
+        const float delayed_saturated_l = tanhf(delayed_l * 1.0f);
+        const float delayed_saturated_r = tanhf(delayed_r * 1.0f);
+
+        const float delayed_colored_l = coloration_l.Process(delayed_saturated_l);
+        const float delayed_colored_r = coloration_r.Process(delayed_saturated_r);
+
+        delay_l.Write(send_signal_l * send_level + delayed_colored_r * feedback);
+        delay_r.Write(send_signal_r * send_level + delayed_colored_l * feedback);
+
+        const float dry_mix_l = x_l * dry_fader;
+        const float dry_mix_r = x_r * dry_fader;
+        const float wet_mix_l = delayed_colored_l * 1.2f;
+        const float wet_mix_r = delayed_colored_r * 1.2f;
+
+        OUT_L[i] = dry_mix_l + wet_mix_l;
+        OUT_R[i] = dry_mix_r + wet_mix_r;
     }
 
     tap_button.Debounce();
@@ -156,6 +190,17 @@ int main(void)
     lpf_l.SetPassbandGain(1.0f);
     lpf_r.SetPassbandGain(1.0f);
 
+    hpf_send_l.Init(sr);
+    hpf_send_r.Init(sr);
+    hpf_send_l.SetFilterMode(LadderFilter::FilterMode::HP24);
+    hpf_send_r.SetFilterMode(LadderFilter::FilterMode::HP24);
+    hpf_send_l.SetFreq(250.0f);
+    hpf_send_r.SetFreq(250.0f);
+    hpf_send_l.SetInputDrive(1.0f);
+    hpf_send_r.SetInputDrive(1.0f);
+    hpf_send_l.SetPassbandGain(1.0f);
+    hpf_send_r.SetPassbandGain(1.0f);
+
     delay_l.Init();
     delay_r.Init();
     coloration_l.Init();
@@ -164,6 +209,7 @@ int main(void)
     coloration_r.SetFrequency(0.1f);
 
     tap_button.Init(patch.B7, patch.AudioCallbackRate());
+    toggle_mode.Init(patch.B8, patch.AudioCallbackRate());
     blocks_per_second = sr / 64.0f;
 
     patch.StartAudio(AudioCallback);
