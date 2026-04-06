@@ -38,27 +38,32 @@ static void AudioCallback(AudioHandle::InputBuffer in,
     patch.ProcessAnalogControls();
 
     // ===== FILTER SECTION =====
-    float freq_hz;
+    float freq_hz_l;
+    float freq_hz_r;
     float res;
 
     const float pot_cutoff  = (patch.GetAdcValue(CV_1) + 1.0f) * 0.5f;
     const float pot_res     = (patch.GetAdcValue(CV_2) + 1.0f) * 0.5f;
 
-    const float cv_freq = ((patch.GetAdcValue(CV_5) - 0.5f) * 2.0f) * 0.35f;
-    const float cv_res  = ((patch.GetAdcValue(CV_6) - 0.5f) * 2.0f) * 0.35f;
+    const float cv_freq = ((patch.GetAdcValue(CV_5) - 0.5f) * 2.0f) * 0.2f;
+    const float cv_res  = ((patch.GetAdcValue(CV_6) - 0.5f) * 2.0f) * 0.2f;
+    const float cv_stereo = ((patch.GetAdcValue(CV_8) - 0.5f) * 2.0f) * 0.20f;
 
-    const float cutoff_norm = fclamp(pot_cutoff + (cv_freq * 0.5f), 0.0f, 1.0f);
-    const float res_norm    = fclamp(pot_res + (cv_res * 0.35f), 0.0f, 1.0f);
+    const float cutoff_norm = fclamp(pot_cutoff + cv_freq, 0.0f, 1.0f);
+    const float res_norm    = fclamp(pot_res + cv_res, 0.0f, 1.0f);
 
     const float min_hz = 15.0f;
     const float max_hz = 15000.0f;
     const float ratio  = max_hz / min_hz;
-    freq_hz            = min_hz * powf(ratio, cutoff_norm);
+    const float freq_hz_center = min_hz * powf(ratio, cutoff_norm);
+    
+    freq_hz_l = freq_hz_center * powf(ratio, cv_stereo * 0.1f);
+    freq_hz_r = freq_hz_center * powf(ratio, -cv_stereo * 0.1f);
 
     res = res_norm * 1.25f;
 
-    lpf_l.SetFreq(freq_hz);
-    lpf_r.SetFreq(freq_hz);
+    lpf_l.SetFreq(freq_hz_l);
+    lpf_r.SetFreq(freq_hz_r);
     lpf_l.SetRes(res);
     lpf_r.SetRes(res);
 
@@ -68,15 +73,18 @@ static void AudioCallback(AudioHandle::InputBuffer in,
     const float cv_time_mod  = ((patch.GetAdcValue(CV_7) - 0.5f) * 2.0f) * 0.15f;
 
     const uint32_t led_pulse_period_samples = (uint32_t)((60000.0f / tap_tempo_bpm) * (patch.AudioSampleRate() / 1000.0f));
+    const uint32_t ramp_period_samples = led_pulse_period_samples * 2;
     const float led_pulse_phase = (float)led_pulse_sample / (float)led_pulse_period_samples;
+    const float ramp_phase = fmodf((float)led_pulse_sample / (float)ramp_period_samples, 1.0f);
     const float led_pulse = (sinf(led_pulse_phase * 2.0f * M_PI) + 1.0f) * 0.5f;
+    const float ramp_lfo = ramp_phase;
 
     const float quarter_note_ms = (60000.0f / tap_tempo_bpm);
     const float delay_time_ms = quarter_note_ms * (1.0f + cv_time_mod * 0.1f);
     const float delay_samples = (delay_time_ms / 1000.0f) * patch.AudioSampleRate();
 
-    float send_level = pot_send;
-    if(pot_send < 0.04f)
+    float send_level = pot_send * 1.25f;
+    if(pot_send < 0.05f)
         send_level = 0.0f;
     
     const float feedback = pot_feedback * 1.5f;
@@ -113,22 +121,19 @@ static void AudioCallback(AudioHandle::InputBuffer in,
         const float delayed_l = delay_l.Read(delay_samples);
         const float delayed_r = delay_r.Read(delay_samples);
 
-        const float delayed_saturated_l = tanhf(delayed_l * 1.0f);
-        const float delayed_saturated_r = tanhf(delayed_r * 1.0f);
-
-        const float delayed_colored_l = coloration_l.Process(delayed_saturated_l);
-        const float delayed_colored_r = coloration_r.Process(delayed_saturated_r);
-
-        delay_l.Write(send_signal_l * send_level + delayed_colored_r * feedback);
-        delay_r.Write(send_signal_r * send_level + delayed_colored_l * feedback);
+        delay_l.Write(send_signal_l * send_level + delayed_r * feedback);
+        delay_r.Write(send_signal_r * send_level + delayed_l * feedback);
 
         const float dry_mix_l = x_l * dry_fader;
         const float dry_mix_r = x_r * dry_fader;
-        const float wet_mix_l = delayed_colored_l * 1.2f;
-        const float wet_mix_r = delayed_colored_r * 1.2f;
+        const float wet_mix_l = delayed_l * 1.44f;
+        const float wet_mix_r = delayed_r * 1.44f;
 
-        OUT_L[i] = dry_mix_l + wet_mix_l;
-        OUT_R[i] = dry_mix_r + wet_mix_r;
+        const float output_l = dry_mix_l + wet_mix_l;
+        const float output_r = dry_mix_r + wet_mix_r;
+
+        OUT_L[i] = tanhf(output_l * 0.5f) * 2.0f;
+        OUT_R[i] = tanhf(output_r * 0.5f) * 2.0f;
     }
 
     tap_button.Debounce();
@@ -171,8 +176,9 @@ static void AudioCallback(AudioHandle::InputBuffer in,
         led_pulse_sample = 0;
 
     led_brightness = led_pulse * 0.8f;
-
     patch.WriteCvOut(CV_OUT_2, led_brightness * 5.0f);
+
+    patch.WriteCvOut(CV_OUT_1, ramp_lfo * 2.5f);
 }
 
 int main(void)
