@@ -1,0 +1,1 @@
+This repository contains firmwares for the PATCH.INIT() module by Electrosmith that uses the Daisy Patch Sub Module. They're intended for fun and experimentation, and everyone is welcome to use, modify, or enjoy them. No guarantees of any kind are implied.
