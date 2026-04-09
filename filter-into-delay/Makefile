@@ -1,5 +1,5 @@
 # Project Name
-TARGET = patch_init_app
+TARGET = filter-into-delay
 
 # Toolchain
 GCC_PATH ?= /Library/DaisyToolchain/0.2.0/arm/bin

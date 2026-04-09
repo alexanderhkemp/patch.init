@@ -1,4 +1,4 @@
-# patch_init_app
+# filter-into-delay
 
 ## Build
 From this folder:
@@ -9,8 +9,8 @@ make -j
 ```
 
 Artifacts will be in `build/`:
-- `patch_init_app.elf`
-- `patch_init_app.bin`
+- `filter-into-delay.elf`
+- `filter-into-delay.bin`
 
 ## Flash (DFU)
 Put the Daisy Patch.init into DFU mode, then:
