@@ -3,6 +3,7 @@ This repository contains firmware projects for the Electrosmith PATCH.INIT() mod
 ## Projects
 
 - `filter-into-delay/` — `filter-into-delay` firmware
+- `cheap-heat/` — lo-fi tape warble firmware
 - `stereo-parametric-eq/patch_init_app/` — stereo parametric EQ firmware
 
 ## Dependencies
