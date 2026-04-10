@@ -23,3 +23,11 @@ From each project folder:
 make clean
 make -j
 ```
+
+## Releases (Binaries + Manuals)
+
+Prebuilt firmware binaries and user manuals are in `releases/`:
+
+- `releases/filter-into-delay/`
+- `releases/stereoparametricEQ/`
+- `releases/cheap-heat/`
