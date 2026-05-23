@@ -44,27 +44,48 @@ Uses the official [Hothouse HAL](https://github.com/clevelandmusicco/HothouseExa
 | **Left (FSW 1)** | +4dB output boost toggle |
 | **Hold Left 2s** | Enter DFU/bootloader mode |
 
-## Build & Flash
+## Build & Flash Firmware
 
 ```bash
 cd cheap-heat-guitar
 make
-# Flash via USB using Daisy Web Programmer or dfu-util
+# Flash firmware via Daisy Web Programmer (internal 128KB FLASH)
 make program
 ```
 
+## Flashing Audio to QSPI (Mac)
+
+The noise samples live in external 8MB QSPI flash, flashed separately from firmware:
+
+**Quick workflow:**
+```bash
+# 1. Build the QSPI flasher client
+cd Daisy_QSPI_Flasher-main/Daisy_QSPI_Flasher_client
+make
+
+# 2. Flash the flasher client to Daisy (temporary)
+#    Use Daisy Web Programmer with build/FlasherClient.bin
+
+# 3. Convert and flash your audio
+python3 extract_qspi_bins.py                    # Create .bin files
+python3 qspi_sender.py noise_tape_1.bin noise_vinyl_1.bin ...
+
+# 4. Reflash your actual firmware (audio stays in QSPI)
+#    Use Daisy Web Programmer with build/cheap-heat-guitar.bin
+```
+
+See [QSPI_FLASHER_MAC.md](QSPI_FLASHER_MAC.md) for detailed instructions.
+
 ## Noise Loops
-Three 5-second stereo loops stored in **SDRAM** (11.5MB total):
+Three 5-second stereo pairs stored in **QSPI Flash** (~5.6MB total):
 - **Pair 1:** Tape hiss + Vinyl crackle (classic)
-- **Pair 2:** Cassette noise + Dusty vinyl (lo-fi)
+- **Pair 2:** Cassette noise + Dusty vinyl (lo-fi)  
 - **Pair 3:** Reel-to-reel hum + Warped record (extreme)
 
-**Memory Layout:**
-- Buffers placed at `0xc0000000` using `.sdram_bss` linker section
-- Currently using generated placeholder noise (replace with actual WAV data)
-- 52MB+ SDRAM remaining for extended delays, longer loops, or additional features
-
-Loops are compiled into firmware binary (no SD card needed).
+**Architecture:**
+- Firmware in internal 128KB FLASH (web-flashable)
+- Audio in external 8MB QSPI (flashed via Python script)
+- SDRAM available for delay lines and processing
 
 ## Signal Chain
 ```
