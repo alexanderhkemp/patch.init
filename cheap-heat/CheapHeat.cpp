@@ -48,7 +48,8 @@ static float wow_phase          = 0.0f;
 static float flutter_phase_l    = 0.0f;
 static float flutter_phase_r    = 0.37f;
 static float wow_depth_smooth   = 0.0f;
-static float wow_random_slew    = 0.0f;
+static float wow_random_slew_l  = 0.0f;
+static float wow_random_slew_r  = 0.0f;
 static float flutter_noise_slew = 0.0f;
 static float hyst_state_l       = 0.0f;
 static float hyst_state_r       = 0.0f;
@@ -157,8 +158,10 @@ static void AudioCallback(AudioHandle::InputBuffer in,
                            1.0f);
     }
 
+    // Sqrt shaping gives more depth at lower knob settings
     const float wow_depth_shaped  = 0.10f * wow_depth + 0.90f * sqrtf(wow_depth);
-    const float wow_depth_samples = wow_depth_shaped * 2200.0f;
+    // Synth version can handle more extreme wow (1400 samples = ~29ms max)
+    const float wow_depth_samples = wow_depth_shaped * 1400.0f;
     const float flutter_depth_samples = flutter_amt * 22.0f;
 
     const float haze_drive_l = 1.0f + 1.1f * haze_tone + 1.6f * haze_sat;
@@ -264,15 +267,18 @@ static void AudioCallback(AudioHandle::InputBuffer in,
         if(flutter_phase_r >= 1.0f)
             flutter_phase_r -= 1.0f;
 
-        wow_random_slew += 0.00035f * ((0.5f * RandBi() + 0.8f * mod_l) - wow_random_slew);
+        wow_random_slew_l += 0.00028f * ((0.6f * RandBi() + 0.7f * mod_l) - wow_random_slew_l);
+        wow_random_slew_r += 0.00022f * ((0.6f * RandBi() + 0.7f * mod_r) - wow_random_slew_r);
         flutter_noise_slew += 0.0016f * ((0.4f * RandBi() + 0.9f * mod_r) - flutter_noise_slew);
 
+        // Wow LFO shapes - more random than triangle for organic tape feel
         const float wow_tri_l  = Tri(wow_phase);
-        const float wow_tri_r  = Tri(wow_phase + 0.25f);
-        const float wow_rand_l = wow_random_slew;
-        const float wow_rand_r = wow_random_slew;
-        const float wow_lfo_l = fclamp(wow_tri_l * 0.70f + wow_rand_l * 0.30f, -1.0f, 1.0f);
-        const float wow_lfo_r = fclamp(wow_tri_r * 0.68f + wow_rand_r * 0.32f, -1.0f, 1.0f);
+        const float wow_tri_r  = Tri(wow_phase + 0.28f);
+        const float wow_rand_l = wow_random_slew_l;
+        const float wow_rand_r = wow_random_slew_r;
+        // 30% triangle, 70% random slew - more organic tape feel
+        const float wow_lfo_l = fclamp(wow_tri_l * 0.30f + wow_rand_l * 0.70f, -1.0f, 1.0f);
+        const float wow_lfo_r = fclamp(wow_tri_r * 0.28f + wow_rand_r * 0.72f, -1.0f, 1.0f);
         const float flutter_lfo_l = Tri(flutter_phase_l) * 0.8f + flutter_noise_slew * 0.45f;
         const float flutter_lfo_r = Tri(flutter_phase_r) * 0.8f - flutter_noise_slew * 0.42f;
 
@@ -281,11 +287,17 @@ static void AudioCallback(AudioHandle::InputBuffer in,
         const float flutter_mod_l = flutter_lfo_l * flutter_depth_samples;
         const float flutter_mod_r = flutter_lfo_r * flutter_depth_samples;
 
-        const float wow_center_samples = 2600.0f;
+        // Small center delay - modulation only, not audible echo
+        const float wow_center_samples = 200.0f;  // ~4ms at 48kHz
         const float mod_delay_samples_l
-            = fclamp(wow_center_samples + wow_mod_l + flutter_mod_l, 32.0f, 9000.0f);
+            = fclamp(wow_center_samples + wow_mod_l + flutter_mod_l, 32.0f, 6000.0f);
         const float mod_delay_samples_r
-            = fclamp(wow_center_samples + wow_mod_r + flutter_mod_r, 32.0f, 9000.0f);
+            = fclamp(wow_center_samples + wow_mod_r + flutter_mod_r, 32.0f, 6000.0f);
+
+        const float in_energy_l = fabsf(in_l);
+        const float in_energy_r = fabsf(in_r);
+        const float bass_crumble_l = 1.0f + 2.5f * haze_collapse * in_energy_l;
+        const float bass_crumble_r = 1.0f + 2.5f * haze_collapse * in_energy_r;
 
         float hazed_l = haze_filter_l.Process(in_l * haze_drive_l);
         float hazed_r = haze_filter_r.Process(in_r * haze_drive_r);
@@ -298,10 +310,10 @@ static void AudioCallback(AudioHandle::InputBuffer in,
         hazed_l += haze_rough * (mod_l + 0.5f * RandBi());
         hazed_r += haze_rough * (mod_r + 0.5f * RandBi());
 
-        hazed_l = (tanhf((hazed_l + sat_bias_l) * sat_drive_l)
+        hazed_l = (tanhf((hazed_l + sat_bias_l) * sat_drive_l * bass_crumble_l)
                    - tanhf(sat_bias_l * sat_drive_l))
                   * haze_out_trim;
-        hazed_r = (tanhf((hazed_r + sat_bias_r) * sat_drive_r)
+        hazed_r = (tanhf((hazed_r + sat_bias_r) * sat_drive_r * bass_crumble_r)
                    - tanhf(sat_bias_r * sat_drive_r))
                  * haze_out_trim;
 
